@@ -95,7 +95,8 @@ public class ArticleController {
     @GetMapping("/recommendation/{article_id}")
     public ResponseEntity<String> plusRecommendation(@PathVariable("article_id") Long articleId) {
         articleService.upRecommendation(articleId);
-        System.out.println("zzdsdasdaasdadsdsasdasddasdaasdsdasdaasdsdsddsaasdasdssssdsadsasdaasdasdsaasdasddadasdaasdasdz");
+        System.out.println("zzdsdasdaasdadsdsasdasdd안녕 바뀜ssdsadsasdaasdasdsaasdasddadasdaasdasdz");
+        System.out.println("dmd");
         Article article = articleService.findArticleById(articleId);
         userService.upPoint(article.getUser().getId());
 
