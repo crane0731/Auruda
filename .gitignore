@@ -1,0 +1,3 @@
+# Exclude application.yml files in specific subprojects
+/AurudaTrip/src/main/resources/application.yml
+/AurudaLogin/src/main/resources/application.yml
