@@ -122,6 +122,7 @@ public class OpenAiService {
         List<GptPlaceResponseDto> placeResponseDtoList = null;
 
         while (retryCount < maxRetries) {
+            System.out.println("안녕");
             String response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class).getBody();
 
             System.out.println("response = " + response);
@@ -189,7 +190,6 @@ public class OpenAiService {
             if (placeResponseDtoList == null || placeResponseDtoList.isEmpty()) {
             throw new Exception("유효한 여행 코스를 생성하지 못했습니다.");
             }
-
             gptPlaceResponseService.saveData(rediskey, placeResponseDtoList);
             return placeResponseDtoList;
         }
