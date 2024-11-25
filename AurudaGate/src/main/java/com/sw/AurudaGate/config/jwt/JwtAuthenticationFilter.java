@@ -32,7 +32,6 @@ public class JwtAuthenticationFilter implements WebFilter {
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         // 필터 호출 확인
         System.out.println("JwtAuthenticationFilter: filter() called");
-
         // 요청 헤더에서 Authorization 키의 값 조회
         String authorizationHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
 

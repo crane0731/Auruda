@@ -19,7 +19,7 @@ public class TravelPlanEmailScheduler {
 
 
     // 매일 자정 실행 (startDate 전날 메일을 보내는 작업)
-    @Scheduled(cron = "0 0 0 * * *") // 매일 자정 실행
+    @Scheduled(cron = "0 0 20 * * *") // 매일 오후 8시 실행
     public void sendEmailsForUpcomingTravelPlans() {
 
         System.out.println("자ㅏㅏㅏㅏㅏㅏㅏㅏㅏㅏㅏ 스케줄러 시작합니다....................................");

@@ -1,6 +1,7 @@
 package com.sw.AurudaTrip.service.gpt;
 
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -10,7 +11,10 @@ import com.sw.AurudaTrip.dto.google.CreateItineraryRequestDto;
 
 import com.sw.AurudaTrip.dto.gpt.GptPlaceRequestDto;
 import com.sw.AurudaTrip.dto.gpt.GptPlaceResponseDto;
+import com.sw.AurudaTrip.dto.location.Location;
 import com.sw.AurudaTrip.dto.publicdata.TouristSpotDto;
+import com.sw.AurudaTrip.service.distance.DistanceMatrixService;
+import com.sw.AurudaTrip.service.distance.NearestNeighborService;
 import com.sw.AurudaTrip.service.redis.GptPlaceResponseService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
@@ -26,21 +30,26 @@ public class OpenAiService {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final GptPlaceResponseService gptPlaceResponseService;
+    private final DistanceMatrixService distanceMatrixService;
+    private final NearestNeighborService nearestNeighborService;
 
     @Value("${openai.api.key}")
     private String apiKey;
 
-    public OpenAiService(RestTemplate restTemplate, ObjectMapper objectMapper, GptPlaceResponseService gptPlaceResponseService) {
+    public OpenAiService(RestTemplate restTemplate, ObjectMapper objectMapper, GptPlaceResponseService gptPlaceResponseService, DistanceMatrixService distanceMatrixService, NearestNeighborService nearestNeighborService) {
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
         this.gptPlaceResponseService = gptPlaceResponseService;
 
+        this.distanceMatrixService = distanceMatrixService;
+        this.nearestNeighborService = nearestNeighborService;
     }
 
 
     // 여행코스 추천
     public List<GptPlaceResponseDto> getTravelItinerary(CreateItineraryRequestDto dto, List<TouristSpotDto> places) throws Exception {
         String url = "https://api.openai.com/v1/chat/completions";
+
         //Redis 키는 지역 이름으로 지정
         String rediskey = String.format("GptItinerary:%s:%s:%s:%s:%s",
                 dto.getCity().trim(),
@@ -50,20 +59,10 @@ public class OpenAiService {
                 dto.getTheme3().trim());
 
         // Redis에서 데이터가 존재하는지 확인
-        if (gptPlaceResponseService.exists(rediskey)) {
-            System.out.println("Redis에서 데이터 확인...");
-            // Redis에서 데이터 가져오기
-            List<GptPlaceResponseDto> cachedData = gptPlaceResponseService.getData(rediskey);
+        List<GptPlaceResponseDto> cachedData = checkedRedis(places, rediskey);
 
-            // Redis 데이터와 places 동기화
-            syncRedisWithPlaces(cachedData, places);
-
-            // 갱신된 데이터를 Redis에 다시 저장
-            gptPlaceResponseService.saveData(rediskey, cachedData);
-
-            // 갱신된 데이터 반환
-            return cachedData;
-        }
+        //Redis에서 가져온 데이터가 있으면 해당 데이터 반환
+        if (cachedData != null) return cachedData;
 
         List<GptPlaceRequestDto> dtoList = new ArrayList<>();
 
@@ -74,47 +73,27 @@ public class OpenAiService {
 
         JsonNode jsonNode = objectMapper.valueToTree(dtoList);
 
-        // System 메시지 생성
-        String systemRequest = """
-                당신은 여행 코스를 추천하는 AI입니다.
-        """;
+        //GPT에게 요청하기 위한 바디와 헤더 설정
+        HttpEntity<Map<String, Object>> entity = createGptRequest(dto, jsonNode);
+
+        //GPT API에 요청하고 받은 데이터를 JSON으로 파싱
+        List<GptPlaceResponseDto> placeResponseDtoList = parseAndValidateItinerary(dto, places, url, entity);
+
+        if (placeResponseDtoList == null || placeResponseDtoList.isEmpty()) {
+            throw new Exception("유효한 여행 코스를 생성하지 못했습니다.");
+        }
+
+        //최단 경로 구하기
+        List<GptPlaceResponseDto> reorderedPlacesByDay = getNearstNeighborPlace(placeResponseDtoList);
+
+        gptPlaceResponseService.saveData(rediskey, reorderedPlacesByDay);
+        return reorderedPlacesByDay;
+        
+        }
 
 
-        // User 메시지 생성
-        String userRequest = dto.getStartDate() + "부터 " + dto.getEndDate() + "까지 " + dto.getCity() + "으로 여행을 떠날거야" + jsonNode.toString()+"안에 있는 장소 데이터 안에서(추가 데이터는 허용하지 않음)"+
-                dto.getTheme1() + ", " + dto.getTheme2() + ", " + dto.getTheme3() + "의 여행 테마에 알맞게 " + dto.getTravelDay() +
-                "일 차 만큼의 여행 코스를 효율적인 순서를 고려해서 추천해줘. `itinerary` 배열은 정확히" +(6 *Integer.parseInt(dto.getTravelDay()) )+"개의 데이터를 포함해야해";
 
-        Map<String, Object> requestBody = new HashMap<>();
-        requestBody.put("model", "gpt-4-turbo");
-        requestBody.put("max_tokens", 2500);
-        requestBody.put("temperature", 0.2);
-
-        // Functions 정의
-        Map<String, Object> functionSchema = createFunctionSchema(Integer.parseInt(dto.getTravelDay()));
-        requestBody.put("functions", List.of(functionSchema));
-//        requestBody.put("function_call", "auto"); // 함수 자동 호출
-
-        // `function_call` 설정
-        requestBody.put("function_call", Map.of("name", "generate_travel_itinerary")); // 특정 함수 호출 강제
-
-        Map<String, String> systemMessage = new HashMap<>();
-        systemMessage.put("role", "system");
-        systemMessage.put("content", systemRequest);
-
-        Map<String, String> userMessage = new HashMap<>();
-        userMessage.put("role", "user");
-        userMessage.put("content", userRequest);
-
-
-        requestBody.put("messages", new Map[]{systemMessage, userMessage});
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(apiKey);
-
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
-
+    private List<GptPlaceResponseDto> parseAndValidateItinerary(CreateItineraryRequestDto dto, List<TouristSpotDto> places, String url, HttpEntity<Map<String, Object>> entity) throws JsonProcessingException {
         int retryCount = 0;
         int maxRetries = 3; // 최대 재시도 횟수
 
@@ -122,7 +101,6 @@ public class OpenAiService {
         List<GptPlaceResponseDto> placeResponseDtoList = null;
 
         while (retryCount < maxRetries) {
-            System.out.println("안녕");
             String response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class).getBody();
 
             System.out.println("response = " + response);
@@ -185,14 +163,114 @@ public class OpenAiService {
                     retryCount++;
                 }
             }
+        return placeResponseDtoList;
+    }
 
+    private List<GptPlaceResponseDto> checkedRedis(List<TouristSpotDto> places, String rediskey) {
+        if (gptPlaceResponseService.exists(rediskey)) {
+            System.out.println("Redis에서 데이터 확인...");
+            // Redis에서 데이터 가져오기
+            List<GptPlaceResponseDto> cachedData = gptPlaceResponseService.getData(rediskey);
 
-            if (placeResponseDtoList == null || placeResponseDtoList.isEmpty()) {
-            throw new Exception("유효한 여행 코스를 생성하지 못했습니다.");
-            }
-            gptPlaceResponseService.saveData(rediskey, placeResponseDtoList);
-            return placeResponseDtoList;
+            // Redis 데이터와 places 동기화
+            syncRedisWithPlaces(cachedData, places);
+
+            // 갱신된 데이터를 Redis에 다시 저장
+            gptPlaceResponseService.saveData(rediskey, cachedData);
+
+            // 갱신된 데이터 반환
+            return cachedData;
         }
+        return null;
+    }
+
+    private HttpEntity<Map<String, Object>> createGptRequest(CreateItineraryRequestDto dto, JsonNode jsonNode) {
+        // System 메시지 생성
+        String systemRequest = """
+                당신은 여행 코스를 추천하는 AI입니다.
+        """;
+
+
+        // User 메시지 생성
+        String userRequest = dto.getStartDate() + "부터 " + dto.getEndDate() + "까지 " + dto.getCity() + "으로 여행을 떠날거야" + jsonNode.toString()+"안에 있는 장소 데이터 안에서(추가 데이터는 허용하지 않음)"+
+                dto.getTheme1() + ", " + dto.getTheme2() + ", " + dto.getTheme3() + "의 여행 테마에 알맞게 " + dto.getTravelDay() +
+                "일 차 만큼의 여행 코스를 효율적인 순서를 고려해서 추천해줘. `itinerary` 배열은 정확히" +(6 *Integer.parseInt(dto.getTravelDay()) )+"개의 데이터를 포함해야해";
+
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("model", "gpt-4-turbo");
+        requestBody.put("max_tokens", 2500);
+        requestBody.put("temperature", 0.2);
+
+        // Functions 정의
+        Map<String, Object> functionSchema = createFunctionSchema(Integer.parseInt(dto.getTravelDay()));
+        requestBody.put("functions", List.of(functionSchema));
+//        requestBody.put("function_call", "auto"); // 함수 자동 호출
+
+        // `function_call` 설정
+        requestBody.put("function_call", Map.of("name", "generate_travel_itinerary")); // 특정 함수 호출 강제
+
+        Map<String, String> systemMessage = new HashMap<>();
+        systemMessage.put("role", "system");
+        systemMessage.put("content", systemRequest);
+
+        Map<String, String> userMessage = new HashMap<>();
+        userMessage.put("role", "user");
+        userMessage.put("content", userRequest);
+
+
+        requestBody.put("messages", new Map[]{systemMessage, userMessage});
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(apiKey);
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+        return entity;
+    }
+
+    private List<GptPlaceResponseDto> getNearstNeighborPlace(List<GptPlaceResponseDto> placeResponseDtoList) {
+        //최단 코스를 계산하는 알고리즘 로직
+
+        //Day별로 해쉬맵 생성
+        assert placeResponseDtoList != null;
+        Map<String, List<GptPlaceResponseDto>> stringListMap = groupByDay(placeResponseDtoList);
+
+        //최종 여행코스를 저장할 리스트
+        List<GptPlaceResponseDto> reorderedPlacesByDay = new ArrayList<>();
+
+        //Map의 모든 key-value를 순회
+        for (Map.Entry<String, List<GptPlaceResponseDto>> entry : stringListMap.entrySet()) {
+            String day = entry.getKey(); //현재 day의 값
+            List<GptPlaceResponseDto> placesByDay = entry.getValue();//현재 day에 해당하는 장소 리스트
+
+            // List<Location> 생성
+            List<Location> locationList = new ArrayList<>();
+
+            //Location 객체 생성
+            for (GptPlaceResponseDto gptPlaceResponseDto : placesByDay) {
+                Location location = Location.builder()
+                        .latitude(gptPlaceResponseDto.getLat())
+                        .longitude(gptPlaceResponseDto.getLng())
+                        .name(gptPlaceResponseDto.getName())
+                        .build();
+
+                // 생성된 Location 객체를 리스트에 추가
+                locationList.add(location);
+            }
+
+            //거리 행렬 생성
+            double[][] distanceMatrix = distanceMatrixService.createDistanceMatrix(locationList);
+
+            // 최단 경로 계산
+            List<Integer> path = nearestNeighborService.findShortestPath(distanceMatrix);
+
+            // 경로 반환 (장소 이름으로 변환)
+            for (int index : path) {
+                reorderedPlacesByDay.add(placesByDay.get(index));
+            }
+        }
+        return reorderedPlacesByDay;
+    }
 
     private Map<String, Object> createFunctionSchema(int travelDay) {
         return Map.of(
@@ -280,6 +358,16 @@ public class OpenAiService {
 
             }
         }
+    }
+
+    //GptPlaceResponseDto를 Day 별로 해쉬맵에 저장
+    private Map<String,List<GptPlaceResponseDto>> groupByDay(List<GptPlaceResponseDto>places){
+        Map<String,List<GptPlaceResponseDto>> groupedByDay = new HashMap<>();
+        for (GptPlaceResponseDto place : places) {
+            groupedByDay.putIfAbsent(place.getDay(), new ArrayList<>());
+            groupedByDay.get(place.getDay()).add(place);
+        }
+        return groupedByDay;
     }
 
 }

@@ -11,5 +11,5 @@ public class AurudaDiscoveryApplication {
 	public static void main(String[] args) {
 		SpringApplication.run(AurudaDiscoveryApplication.class, args);
 	}
-
+	
 }
