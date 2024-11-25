@@ -50,7 +50,7 @@ public class OpenAiService {
     public List<GptPlaceResponseDto> getTravelItinerary(CreateItineraryRequestDto dto, List<TouristSpotDto> places) throws Exception {
         String url = "https://api.openai.com/v1/chat/completions";
 
-        System.out.println("dasdssssddasd = ");
+        System.out.println("dasdsssssssddasd = ");
 
         //Redis 키는 지역 이름으로 지정
         String rediskey = String.format("GptItinerary:%s:%s:%s:%s:%s",
