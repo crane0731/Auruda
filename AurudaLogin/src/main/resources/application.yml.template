@@ -62,12 +62,3 @@ jwt:
   issuer: dlwnsgkr8318@skuniv.ac.kr
   secret_key: asfacolkasndlknv3203klfamkld02asdkjfajkvnlancdkdklmasdklv
 
-
-eureka:
-  instance:
-    instance-id: ${spring.cloud.client.hostname}:${spring.application.instance_id:${random.value}}
-  client:
-    register-with-eureka: true
-    fetch-registry: true
-    service-url:
-      defaultZone: http://127.0.0.1:8761/eureka
