@@ -98,6 +98,7 @@ public class ArticleController {
         Article article = articleService.findArticleById(articleId);
         userService.upPoint(article.getUser().getId());
 
+
         return ResponseEntity.ok("게시물 추천 성공");
     }
 
