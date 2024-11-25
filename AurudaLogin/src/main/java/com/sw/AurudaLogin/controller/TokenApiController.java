@@ -16,6 +16,7 @@ public class TokenApiController {
     @PostMapping("/api/auruda/token")
     public ResponseEntity<CreateAccessTokenResponse> createNewAccessToken(@RequestHeader("Authorization")String authorizationHeader) {
 
+        System.out.println("dd");
         String token = "";
         
         if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
