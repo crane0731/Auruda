@@ -140,6 +140,7 @@ public class UserController {
     @DeleteMapping("/admin/{user_id}")
     public ResponseEntity<String> deleteUser(@PathVariable Long user_id){
 
+        System.out.println("ddsd");
 
             User user = userService.findById(user_id);
             // 서비스에서 유저 삭제
